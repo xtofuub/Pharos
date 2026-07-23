@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Iterable
 
 from breachelens.db import Database
 
@@ -45,7 +44,6 @@ async def rebuild_identities(db: Database) -> None:
             )
             emails = [row[0] for row in await cur.fetchall()]
 
-            # Several observed variants may canonicalize to the same identity.
             canonical_to_variants: dict[str, set[str]] = {}
             for email in emails:
                 canonical_to_variants.setdefault(canonicalize_email(email), set()).add(email)
@@ -92,79 +90,106 @@ async def rebuild_identities(db: Database) -> None:
                     (identity_id, identity_id),
                 )
 
-                cur = await conn.execute(
-                    """
-                    SELECT COUNT(DISTINCT r.id), COUNT(DISTINCT r.source_id),
-                           MIN(r.created_at), MAX(r.created_at),
-                           COUNT(DISTINCT CASE WHEN re.entity_type = 'service' THEN re.normalized_value END),
-                           COUNT(DISTINCT CASE WHEN re.entity_type = 'phone' THEN re.normalized_value END),
-                           COUNT(DISTINCT CASE WHEN re.entity_type = 'hash' THEN re.normalized_value END),
-                           COUNT(DISTINCT CASE WHEN re.entity_type = 'secret_type' THEN re.normalized_value END)
-                    FROM identity_records ir
-                    JOIN records r ON r.id = ir.record_id
-                    LEFT JOIN record_entities re ON re.record_id = r.id
-                    WHERE ir.identity_id = ?
-                    """,
-                    (identity_id,),
-                )
-                stats = await cur.fetchone()
-                record_count = int(stats[0] or 0)
-                source_count = int(stats[1] or 0)
-                services = int(stats[4] or 0)
-                phones = int(stats[5] or 0)
-                hashes = int(stats[6] or 0)
-                secrets = int(stats[7] or 0)
-                risk = min(100, record_count * 2 + source_count * 8 + services * 3 + phones * 6 + hashes * 4 + secrets * 10)
                 await conn.execute(
                     """
                     UPDATE identities
-                    SET record_count = ?, source_count = ?, risk_score = ?,
-                        first_seen_at = ?, last_seen_at = ?, updated_at = datetime('now')
+                    SET record_count = (
+                            SELECT COUNT(*) FROM identity_records WHERE identity_id = ?
+                        ),
+                        source_count = (
+                            SELECT COUNT(DISTINCT r.source_id)
+                            FROM identity_records ir
+                            JOIN records r ON r.id = ir.record_id
+                            WHERE ir.identity_id = ?
+                        ),
+                        first_seen_at = (
+                            SELECT MIN(r.created_at)
+                            FROM identity_records ir
+                            JOIN records r ON r.id = ir.record_id
+                            WHERE ir.identity_id = ?
+                        ),
+                        last_seen_at = (
+                            SELECT MAX(r.created_at)
+                            FROM identity_records ir
+                            JOIN records r ON r.id = ir.record_id
+                            WHERE ir.identity_id = ?
+                        ),
+                        risk_score = MIN(100,
+                            10
+                            + 5 * (SELECT COUNT(*) FROM identity_records WHERE identity_id = ?)
+                            + 8 * (SELECT COUNT(*) FROM identity_entities WHERE identity_id = ? AND entity_type = 'secret_type')
+                            + 4 * (SELECT COUNT(*) FROM identity_entities WHERE identity_id = ? AND entity_type IN ('phone','ip','hash'))
+                            + 3 * (SELECT COUNT(*) FROM identity_entities WHERE identity_id = ? AND entity_type = 'service')
+                        ),
+                        updated_at = datetime('now')
                     WHERE id = ?
                     """,
-                    (record_count, source_count, risk, stats[2], stats[3], identity_id),
+                    (
+                        identity_id,
+                        identity_id,
+                        identity_id,
+                        identity_id,
+                        identity_id,
+                        identity_id,
+                        identity_id,
+                        identity_id,
+                        identity_id,
+                    ),
                 )
+
             await conn.commit()
         except Exception:
             await conn.rollback()
             raise
 
 
-async def list_profiles(db: Database, query: str = "", page: int = 1, page_size: int = 50) -> dict:
+async def list_profiles(
+    db: Database,
+    query: str = "",
+    page: int = 1,
+    page_size: int = 50,
+) -> dict:
     page = max(1, page)
-    page_size = max(1, min(page_size, 200))
+    page_size = max(1, min(200, page_size))
     offset = (page - 1) * page_size
-    term = query.strip().lower()
-    params: list = []
+    q = query.strip().lower()
+    params: list[object] = []
     where = "1=1"
-    if term:
+    if q:
         where = """
-            lower(i.primary_email) LIKE ? OR lower(coalesce(i.display_name, '')) LIKE ? OR
-            EXISTS (
+        (
+            lower(i.primary_email) LIKE ?
+            OR lower(COALESCE(i.display_name, '')) LIKE ?
+            OR EXISTS (
                 SELECT 1 FROM identity_entities ie
-                WHERE ie.identity_id = i.id AND lower(ie.value) LIKE ?
+                WHERE ie.identity_id = i.id
+                  AND lower(ie.value) LIKE ?
             )
+        )
         """
-        needle = f"%{term}%"
-        params.extend([needle, needle, needle])
-    total = await db.fetchval(f"SELECT COUNT(*) FROM identities i WHERE {where}", params)
+        like = f"%{q}%"
+        params = [like, like, like]
+
+    total = await db.fetchval(f"SELECT COUNT(*) FROM identities i WHERE {where}", params) or 0
     rows = await db.fetchall(
         f"""
         SELECT i.*,
-               (SELECT COUNT(*) FROM identity_entities ie WHERE ie.identity_id = i.id) AS entity_count,
-               (SELECT group_concat(value, ', ') FROM (
-                    SELECT ie.value FROM identity_entities ie
-                    WHERE ie.identity_id = i.id AND ie.entity_type = 'service'
-                    ORDER BY ie.occurrence_count DESC LIMIT 5
-               )) AS top_services
+               (SELECT COUNT(*) FROM identity_entities ie WHERE ie.identity_id=i.id AND ie.entity_type='email') AS email_count,
+               (SELECT COUNT(*) FROM identity_entities ie WHERE ie.identity_id=i.id AND ie.entity_type='username') AS username_count,
+               (SELECT COUNT(*) FROM identity_entities ie WHERE ie.identity_id=i.id AND ie.entity_type='service') AS service_count
         FROM identities i
         WHERE {where}
-        ORDER BY i.risk_score DESC, i.record_count DESC, i.primary_email
+        ORDER BY i.risk_score DESC, i.record_count DESC, i.primary_email ASC
         LIMIT ? OFFSET ?
         """,
         [*params, page_size, offset],
     )
-    return {"profiles": [dict(row) for row in rows], "total": int(total or 0), "page": page, "page_size": page_size}
+    return {
+        "profiles": [dict(r) for r in rows],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 async def get_profile(db: Database, profile_id: int) -> dict | None:
