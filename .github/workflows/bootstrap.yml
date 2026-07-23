@@ -3,6 +3,8 @@ name: Bootstrap Pharos source
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -22,6 +24,7 @@ jobs:
           tar -xJf /tmp/pharos-source.tar.xz -C .
           rm -rf .bootstrap
           rm -f .github/workflows/bootstrap.yml
+          rm -f .github/bootstrap-trigger.txt
 
       - name: Commit source
         shell: bash
