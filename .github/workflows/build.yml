@@ -19,6 +19,8 @@ jobs:
   prepare-source:
     name: Prepare source tree
     runs-on: ubuntu-latest
+    outputs:
+      had_payload: ${{ steps.detect.outputs.had_payload }}
     steps:
       - name: Check out branch
         uses: actions/checkout@v5
@@ -26,25 +28,50 @@ jobs:
           ref: ${{ github.head_ref || github.ref_name }}
           fetch-depth: 0
 
-      - name: Expand one-time Pharos 0.3 payload
+      - name: Detect bootstrap payload
+        id: detect
         shell: bash
         run: |
           if compgen -G '.pharos-bootstrap/part*' > /dev/null; then
-            cat .pharos-bootstrap/part* | base64 --decode > /tmp/pharos-0.3.tar.xz
-            tar -xJf /tmp/pharos-0.3.tar.xz -C .
-            rm -rf .pharos-bootstrap
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -A
-            git commit -m "Add Pharos 0.3 identity profiles and reliable indexing"
-            git push origin HEAD:${{ github.head_ref || github.ref_name }}
+            echo "had_payload=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Source tree already prepared."
+            echo "had_payload=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Decode and verify payload
+        if: steps.detect.outputs.had_payload == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .pharos-bootstrap/part* | base64 --decode > /tmp/pharos-0.3.tar.xz
+          xz --test /tmp/pharos-0.3.tar.xz
+          ls -lh /tmp/pharos-0.3.tar.xz
+
+      - name: Expand source tree
+        if: steps.detect.outputs.had_payload == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -xJf /tmp/pharos-0.3.tar.xz -C .
+          rm -rf .pharos-bootstrap
+          test -f backend/breachelens/identities.py
+          test -f backend/migrations/002_pharos_03.sql
+
+      - name: Commit expanded source
+        if: github.event_name == 'push' && steps.detect.outputs.had_payload == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Add Pharos 0.3 identity profiles and reliable indexing"
+          git push origin HEAD:${{ github.ref_name }}
 
   build-windows:
     name: Build Pharos.exe
     needs: prepare-source
+    if: github.event_name == 'push' || needs.prepare-source.outputs.had_payload == 'false'
     runs-on: windows-latest
     steps:
       - name: Check out prepared source
