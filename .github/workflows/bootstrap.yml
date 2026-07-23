@@ -9,7 +9,6 @@ on:
 
 permissions:
   contents: write
-  actions: write
 
 jobs:
   bootstrap:
@@ -27,7 +26,7 @@ jobs:
           tar -xJf /tmp/pharos-source.tar.xz -C .
           sed -i '1s/^# BreachLens$/# Pharos/' README.md
           rm -rf .bootstrap
-          rm -f .github/workflows/bootstrap.yml
+          rm -f .github/workflows/build.yml
           rm -f .github/bootstrap-trigger.txt
 
       - name: Commit source
@@ -36,23 +35,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Add Pharos source and Windows build workflow"
+          git commit -m "Add Pharos source"
 
           for attempt in 1 2 3 4 5; do
             git fetch origin main
             remote_sha="$(git rev-parse origin/main)"
             git push --force-with-lease="refs/heads/main:${remote_sha}" origin HEAD:main && exit 0
             sleep 2
-          done
-          exit 1
-
-      - name: Trigger Windows build
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          for attempt in 1 2 3 4 5; do
-            gh workflow run build.yml --ref main && exit 0
-            sleep 3
           done
           exit 1
