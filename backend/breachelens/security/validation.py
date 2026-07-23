@@ -1,29 +1,53 @@
 """Input validation: paths, queries, regex patterns."""
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
-from breachelens.errors import PathNotAllowedError, BadRequestError, RegexRejectedError, NotFoundError
+from breachelens.errors import BadRequestError, NotFoundError, PathNotAllowedError, RegexRejectedError
 
 CATASTROPHIC_PATTERNS = ["(a+)+", "(a*)*", "(.+)+", ".*.*.*.*.*.*"]
 
 
+def clean_local_path(path: str) -> str:
+    """Clean a path copied from Explorer, a terminal, or a quoted dialog."""
+    cleaned = str(path or "").strip()
+    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
+        cleaned = cleaned[1:-1].strip()
+    cleaned = os.path.expandvars(os.path.expanduser(cleaned))
+    if not cleaned:
+        raise BadRequestError("folder path is required")
+    return cleaned
+
+
 def validate_path(path: str) -> Path:
-    p = Path(path)
+    cleaned = clean_local_path(path)
+    p = Path(cleaned)
     if not p.is_absolute():
-        raise PathNotAllowedError(f"path must be absolute: {path}")
+        raise PathNotAllowedError(f"path must be absolute: {cleaned}")
     try:
         canonical = p.resolve(strict=True)
     except FileNotFoundError:
-        raise NotFoundError(f"path does not exist: {path}")
+        raise NotFoundError(f"path does not exist: {cleaned}")
+    except OSError as exc:
+        raise PathNotAllowedError(f"cannot resolve path {cleaned}: {exc}")
     return canonical
 
 
 def validate_source_folder(path: str) -> Path:
     p = validate_path(path)
     if not p.is_dir():
-        raise BadRequestError(f"not a directory: {path}")
+        raise BadRequestError(f"not a directory: {p}")
+    try:
+        # Opening the directory catches common Windows ACL and disconnected-drive
+        # problems earlier than the background indexer.
+        with os.scandir(p) as entries:
+            next(entries, None)
+    except PermissionError as exc:
+        raise PathNotAllowedError(f"folder is not readable: {p} ({exc})")
+    except OSError as exc:
+        raise PathNotAllowedError(f"cannot access folder: {p} ({exc})")
     return p
 
 
@@ -44,6 +68,6 @@ def validate_regex(pattern: str, max_length: int = 256) -> None:
         re.compile(pattern)
     except re.error as e:
         raise RegexRejectedError(f"invalid regex: {e}")
-    for c in CATASTROPHIC_PATTERNS:
-        if c in pattern:
-            raise RegexRejectedError(f"catastrophic backtracking pattern detected: {c}")
+    for candidate in CATASTROPHIC_PATTERNS:
+        if candidate in pattern:
+            raise RegexRejectedError(f"catastrophic backtracking pattern detected: {candidate}")
