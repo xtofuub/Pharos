@@ -22,6 +22,7 @@ jobs:
         run: |
           cat .bootstrap/part* > /tmp/pharos-source.tar.xz
           tar -xJf /tmp/pharos-source.tar.xz -C .
+          sed -i '1s/^# BreachLens$/# Pharos/' README.md
           rm -rf .bootstrap
           rm -f .github/workflows/bootstrap.yml
           rm -f .github/bootstrap-trigger.txt
