@@ -1,19 +1,24 @@
-"""Indexing job orchestration: stream files, parse records, batch-insert into FTS5."""
+"""Indexing job orchestration: scan, stream, parse, and batch-write records."""
 from __future__ import annotations
 
 import asyncio
+import datetime
+import itertools
+import logging
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
 from breachelens.db import Database
 from breachelens.errors import IndexingError
 from breachelens.ingest.format_detection import detect_format
-from breachelens.ingest.parser import parse_line
-from breachelens.ingest.scanner import ScannedFile, scan_folder
 from breachelens.ingest.index_writer import write_batch
+from breachelens.ingest.parser import parse_line
+from breachelens.ingest.scanner import ScannedFile, scan_folder_detailed
 from breachelens.state import AppState
+
+log = logging.getLogger("breachelens")
 
 
 @dataclass
@@ -34,7 +39,6 @@ class JobSnapshot:
     eta_secs: Optional[float] = None
 
 
-# Module-level singletons (the app holds one job at a time)
 _current_job: Optional[JobSnapshot] = None
 _cancel_event = asyncio.Event()
 
@@ -44,34 +48,27 @@ def get_current_job() -> Optional[JobSnapshot]:
 
 
 async def start_indexing(state: AppState, source_id: int) -> int:
-    """Start an indexing job for the given source. Returns the job ID."""
+    """Start an indexing job for a source and return its database job ID."""
     global _current_job, _cancel_event
     if _current_job is not None:
         raise IndexingError("an indexing job is already running")
 
-    # Load source
     source_row = await state.db.fetchone(
-        "SELECT id, path, allowed_extensions, storage_mode FROM sources WHERE id = ?",
+        "SELECT id, path, allowed_extensions FROM sources WHERE id = ?",
         (source_id,),
     )
     if source_row is None:
         from breachelens.errors import NotFoundError
+
         raise NotFoundError(f"source id {source_id} not found")
 
-    # Insert job row
-    import datetime
     started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
     cur = await state.db.execute(
         "INSERT INTO index_jobs (source_id, status, started_at) VALUES (?, 'running', ?)",
         (source_id, started_at),
     )
-    job_id = cur.lastrowid or 0
-
-    # Set source status
-    await state.db.execute(
-        "UPDATE sources SET status = 'indexing' WHERE id = ?",
-        (source_id,),
-    )
+    job_id = int(cur.lastrowid or 0)
+    await state.db.execute("UPDATE sources SET status = 'indexing' WHERE id = ?", (source_id,))
 
     _cancel_event = asyncio.Event()
     _current_job = JobSnapshot(
@@ -81,28 +78,27 @@ async def start_indexing(state: AppState, source_id: int) -> int:
         started_at=started_at,
     )
 
-    # Run in background
-    task = asyncio.create_task(_run_job(state, job_id, source_row["path"], source_row["allowed_extensions"]))
+    task = asyncio.create_task(
+        _run_job(state, job_id, source_id, source_row["path"], source_row["allowed_extensions"])
+    )
     task.add_done_callback(_task_done_callback)
     return job_id
 
 
 def _task_done_callback(task: asyncio.Task) -> None:
-    """Log any exception that occurred in the indexing task."""
     if task.cancelled():
         return
     exc = task.exception()
     if exc is not None:
-        import logging
-        logging.getLogger("breachelens").error("indexing task failed: %r", exc, exc_info=exc)
+        log.error("indexing task failed: %r", exc, exc_info=exc)
 
 
 async def cancel_indexing(state: AppState) -> None:
-    global _current_job
     _cancel_event.set()
     if _current_job is not None:
+        _current_job.status = "cancelling"
         await state.db.execute(
-            "UPDATE index_jobs SET status = 'cancelled', finished_at = datetime('now') WHERE id = ?",
+            "UPDATE index_jobs SET status = 'cancelling' WHERE id = ?",
             (_current_job.job_id,),
         )
 
@@ -117,193 +113,408 @@ async def list_jobs(state: AppState, limit: int = 20) -> List[dict]:
         """,
         (limit,),
     )
-    return [dict(r) for r in rows]
+    return [dict(row) for row in rows]
 
 
-async def _run_job(state: AppState, job_id: int, source_path: str, allowed_exts_str: str) -> None:
+async def list_job_errors(state: AppState, job_id: int, limit: int = 100) -> List[dict]:
+    rows = await state.db.fetchall(
+        """
+        SELECT file_path, line_number, message, severity, timestamp
+        FROM index_errors
+        WHERE job_id = ?
+        ORDER BY id DESC LIMIT ?
+        """,
+        (job_id, limit),
+    )
+    return [dict(row) for row in rows]
+
+
+async def _run_job(
+    state: AppState,
+    job_id: int,
+    source_id: int,
+    source_path: str,
+    allowed_exts_str: str,
+) -> None:
     global _current_job
-    start_time = time.monotonic()
+    started = time.monotonic()
     try:
         root = Path(source_path)
-        allowed_exts = [e.strip().lower().lstrip(".") for e in allowed_exts_str.split(",") if e.strip()]
-        files = scan_folder(root, allowed_exts)
-        files_total = len(files)
+        allowed_exts = [
+            value.strip().lower().lstrip(".")
+            for value in allowed_exts_str.split(",")
+            if value.strip()
+        ]
+        max_size = state.config.indexing.max_file_size_mb * 1024 * 1024
+        scan = await asyncio.to_thread(
+            scan_folder_detailed,
+            root,
+            allowed_exts,
+            max_file_size_bytes=max_size,
+        )
+        files = scan.files
 
         await state.db.execute(
             "UPDATE index_jobs SET files_total = ? WHERE id = ?",
-            (files_total, job_id),
+            (len(files), job_id),
         )
         if _current_job:
-            _current_job.files_total = files_total
+            _current_job.files_total = len(files)
 
-        records_total = 0
-        errors_total = 0
-        files_processed = 0
-        files_skipped = 0
-        batch_size = state.config.indexing.batch_size
-
-        for f in files:
-            if _cancel_event.is_set():
-                await state.db.execute(
-                    "UPDATE index_jobs SET status = 'cancelled', finished_at = datetime('now') WHERE id = ?",
-                    (job_id,),
-                )
-                break
-
-            if state.config.indexing.skip_unchanged and await _is_file_unchanged(state.db, f):
-                files_skipped += 1
-                if _current_job:
-                    _current_job.files_skipped = files_skipped
-                    _current_job.current_file = str(f.path)
-                continue
-
-            if _current_job:
-                _current_job.current_file = str(f.path)
-
-            try:
-                records = await _index_file(state, job_id, _current_job.source_id if _current_job else 0, f, batch_size)
-                records_total += records
-                files_processed += 1
-            except Exception as e:
-                errors_total += 1
-                await state.db.execute(
-                    "INSERT INTO index_errors (job_id, file_path, message, severity) VALUES (?, ?, ?, 'error')",
-                    (job_id, str(f.path), str(e)),
-                )
-
-            elapsed = time.monotonic() - start_time
-            lps = records_total / elapsed if elapsed > 0 else 0.0
-            total_bytes = sum(ff.size_bytes for ff in files[:files_processed])
-            mbs = (total_bytes / (1024 * 1024)) / elapsed if elapsed > 0 else 0.0
-            eta = (elapsed / files_processed) * (files_total - files_processed) if files_processed > 0 else None
-
-            if _current_job:
-                _current_job.files_processed = files_processed
-                _current_job.files_skipped = files_skipped
-                _current_job.records_indexed = records_total
-                _current_job.errors = errors_total
-                _current_job.lines_per_sec = lps
-                _current_job.mb_per_sec = mbs
-                _current_job.elapsed_secs = elapsed
-                _current_job.eta_secs = eta
-
+        for warning in scan.errors[:100]:
             await state.db.execute(
-                """
-                UPDATE index_jobs SET files_processed = ?, files_skipped = ?, records_indexed = ?,
-                       errors_count = ?, throughput_lps = ?, throughput_mbs = ?, current_file = ?
-                WHERE id = ?
-                """,
-                (files_processed, files_skipped, records_total, errors_total, lps, mbs, str(f.path), job_id),
+                "INSERT INTO index_errors (job_id, file_path, message, severity) VALUES (?, ?, ?, 'warning')",
+                (job_id, str(root), warning),
             )
 
-        # Finalize
-        elapsed = time.monotonic() - start_time
-        lps = records_total / elapsed if elapsed > 0 else 0.0
+        if not files:
+            extensions = ", ".join(f".{ext}" for ext in allowed_exts)
+            extra = ""
+            if scan.skipped_large_files:
+                extra = f"; {scan.skipped_large_files} files exceeded the size limit"
+            raise IndexingError(
+                f"No readable supported files found in {root}. Allowed extensions: {extensions}{extra}"
+            )
+
+        # Only remove stale files when the scan itself had no directory-access errors.
+        if not scan.errors:
+            await _remove_missing_files(state, source_id, {str(item.path) for item in files})
+
+        records_new = 0
+        errors_total = len(scan.errors)
+        files_processed = 0
+        files_skipped = 0
+        bytes_done = 0
+        batch_size = state.config.indexing.batch_size
+
+        for scanned_file in files:
+            if _cancel_event.is_set():
+                await _mark_cancelled(state, job_id, source_id)
+                return
+
+            if _current_job:
+                _current_job.current_file = str(scanned_file.path)
+
+            if state.config.indexing.skip_unchanged and await _is_file_unchanged(
+                state.db, source_id, scanned_file
+            ):
+                files_skipped += 1
+                bytes_done += scanned_file.size_bytes
+                await _update_progress(
+                    state,
+                    job_id,
+                    started,
+                    files_processed,
+                    files_skipped,
+                    records_new,
+                    errors_total,
+                    bytes_done,
+                    len(files),
+                    str(scanned_file.path),
+                )
+                continue
+
+            try:
+                # A changed file replaces its prior rows instead of duplicating them.
+                await _purge_file_records(state, source_id, str(scanned_file.path), delete_file_row=False)
+                indexed = await _index_file(
+                    state,
+                    source_id,
+                    scanned_file,
+                    batch_size,
+                )
+                records_new += indexed
+                files_processed += 1
+            except Exception as exc:
+                errors_total += 1
+                await _mark_file_error(state, source_id, scanned_file)
+                await state.db.execute(
+                    "INSERT INTO index_errors (job_id, file_path, message, severity) VALUES (?, ?, ?, 'error')",
+                    (job_id, str(scanned_file.path), str(exc)),
+                )
+                log.exception("failed to index %s", scanned_file.path)
+
+            bytes_done += scanned_file.size_bytes
+            await _update_progress(
+                state,
+                job_id,
+                started,
+                files_processed,
+                files_skipped,
+                records_new,
+                errors_total,
+                bytes_done,
+                len(files),
+                str(scanned_file.path),
+            )
+
+        elapsed = time.monotonic() - started
+        lps = records_new / elapsed if elapsed > 0 else 0.0
+        totals = await state.db.fetchone(
+            """
+            SELECT COUNT(*) AS files_count,
+                   COALESCE(SUM(records_indexed), 0) AS records_count,
+                   COALESCE(SUM(size_bytes), 0) AS size_bytes
+            FROM files WHERE source_id = ?
+            """,
+            (source_id,),
+        )
+        source_status = "indexed_with_errors" if errors_total else "indexed"
+        summary = f"Completed with {errors_total} warning/error(s)" if errors_total else None
+
         await state.db.execute(
             """
-            UPDATE index_jobs SET status = 'completed', finished_at = datetime('now'),
-                   files_processed = ?, files_skipped = ?, records_indexed = ?,
-                   errors_count = ?, throughput_lps = ?, throughput_mbs = 0, current_file = NULL
+            UPDATE index_jobs
+            SET status = 'completed', finished_at = datetime('now'),
+                files_processed = ?, files_skipped = ?, records_indexed = ?,
+                errors_count = ?, throughput_lps = ?, throughput_mbs = ?,
+                current_file = NULL, error_message = ?
             WHERE id = ?
             """,
-            (files_processed, files_skipped, records_total, errors_total, lps, job_id),
+            (
+                files_processed,
+                files_skipped,
+                records_new,
+                errors_total,
+                lps,
+                (bytes_done / (1024 * 1024)) / elapsed if elapsed > 0 else 0.0,
+                summary,
+                job_id,
+            ),
         )
         await state.db.execute(
-            "UPDATE sources SET status = 'indexed', records_count = ?, files_count = ?, last_indexed_at = datetime('now') WHERE id = ?",
-            (records_total, files_processed, _current_job.source_id if _current_job else 0),
+            """
+            UPDATE sources
+            SET status = ?, records_count = ?, files_count = ?, size_bytes = ?,
+                last_indexed_at = datetime('now')
+            WHERE id = ?
+            """,
+            (
+                source_status,
+                int(totals["records_count"] if totals else 0),
+                int(totals["files_count"] if totals else 0),
+                int(totals["size_bytes"] if totals else 0),
+                source_id,
+            ),
         )
 
-    except Exception as e:
+    except Exception as exc:
+        message = str(exc)
         await state.db.execute(
             "UPDATE index_jobs SET status = 'failed', finished_at = datetime('now'), error_message = ? WHERE id = ?",
-            (str(e), job_id),
+            (message, job_id),
         )
+        await state.db.execute(
+            "UPDATE sources SET status = 'error' WHERE id = ?",
+            (source_id,),
+        )
+        log.error("indexing job %s failed: %s", job_id, message)
     finally:
         _current_job = None
 
 
-async def _is_file_unchanged(db: Database, f: ScannedFile) -> bool:
+async def _mark_cancelled(state: AppState, job_id: int, source_id: int) -> None:
+    await state.db.execute(
+        "UPDATE index_jobs SET status = 'cancelled', finished_at = datetime('now'), current_file = NULL WHERE id = ?",
+        (job_id,),
+    )
+    await state.db.execute(
+        "UPDATE sources SET status = 'pending' WHERE id = ?",
+        (source_id,),
+    )
+
+
+async def _update_progress(
+    state: AppState,
+    job_id: int,
+    started: float,
+    files_processed: int,
+    files_skipped: int,
+    records_indexed: int,
+    errors: int,
+    bytes_done: int,
+    files_total: int,
+    current_file: str,
+) -> None:
+    elapsed = time.monotonic() - started
+    completed = files_processed + files_skipped
+    lps = records_indexed / elapsed if elapsed > 0 else 0.0
+    mbs = (bytes_done / (1024 * 1024)) / elapsed if elapsed > 0 else 0.0
+    eta = (elapsed / completed) * (files_total - completed) if completed > 0 else None
+
+    if _current_job:
+        _current_job.files_processed = files_processed
+        _current_job.files_skipped = files_skipped
+        _current_job.records_indexed = records_indexed
+        _current_job.errors = errors
+        _current_job.lines_per_sec = lps
+        _current_job.mb_per_sec = mbs
+        _current_job.elapsed_secs = elapsed
+        _current_job.eta_secs = eta
+
+    await state.db.execute(
+        """
+        UPDATE index_jobs
+        SET files_processed = ?, files_skipped = ?, records_indexed = ?,
+            errors_count = ?, throughput_lps = ?, throughput_mbs = ?, current_file = ?
+        WHERE id = ?
+        """,
+        (
+            files_processed,
+            files_skipped,
+            records_indexed,
+            errors,
+            lps,
+            mbs,
+            current_file,
+            job_id,
+        ),
+    )
+
+
+async def _is_file_unchanged(db: Database, source_id: int, scanned_file: ScannedFile) -> bool:
     row = await db.fetchone(
-        "SELECT mtime, size_bytes FROM files WHERE path = ?",
-        (str(f.path),),
+        "SELECT mtime, size_bytes FROM files WHERE source_id = ? AND path = ?",
+        (source_id, str(scanned_file.path)),
     )
     if row is None:
         return False
-    return row["mtime"] == f.mtime and row["size_bytes"] == f.size_bytes
+    return row["mtime"] == scanned_file.mtime and row["size_bytes"] == scanned_file.size_bytes
+
+
+async def _remove_missing_files(state: AppState, source_id: int, scanned_paths: set[str]) -> None:
+    existing = await state.db.fetchall("SELECT path FROM files WHERE source_id = ?", (source_id,))
+    for row in existing:
+        path = str(row["path"])
+        if path not in scanned_paths:
+            await _purge_file_records(state, source_id, path, delete_file_row=True)
+
+
+async def _purge_file_records(
+    state: AppState,
+    source_id: int,
+    file_path: str,
+    *,
+    delete_file_row: bool,
+) -> None:
+    rows = await state.db.fetchall(
+        "SELECT fts_rowid FROM records WHERE source_id = ? AND file_path = ?",
+        (source_id, file_path),
+    )
+    async with state.db._lock:
+        for row in rows:
+            await state.db.conn.execute("DELETE FROM records_fts WHERE rowid = ?", (row["fts_rowid"],))
+        await state.db.conn.execute(
+            "DELETE FROM records WHERE source_id = ? AND file_path = ?",
+            (source_id, file_path),
+        )
+        if delete_file_row:
+            await state.db.conn.execute(
+                "DELETE FROM files WHERE source_id = ? AND path = ?",
+                (source_id, file_path),
+            )
+        await state.db.conn.commit()
+
+
+async def _mark_file_error(state: AppState, source_id: int, scanned_file: ScannedFile) -> None:
+    await state.db.execute(
+        """
+        INSERT INTO files (
+            source_id, path, file_name, extension, size_bytes, line_count,
+            records_indexed, mtime, detected_format, last_indexed_at, status
+        )
+        VALUES (?, ?, ?, ?, ?, 0, 0, ?, NULL, datetime('now'), 'error')
+        ON CONFLICT(source_id, path) DO UPDATE SET
+            size_bytes = excluded.size_bytes,
+            records_indexed = 0,
+            mtime = excluded.mtime,
+            last_indexed_at = excluded.last_indexed_at,
+            status = 'error'
+        """,
+        (
+            source_id,
+            str(scanned_file.path),
+            scanned_file.file_name,
+            scanned_file.extension,
+            scanned_file.size_bytes,
+            scanned_file.mtime,
+        ),
+    )
 
 
 async def _index_file(
     state: AppState,
-    job_id: int,
     source_id: int,
-    f: ScannedFile,
+    scanned_file: ScannedFile,
     batch_size: int,
 ) -> int:
-    """Stream a single file line-by-line and batch-insert into the index."""
-    path = f.path
+    """Stream one file in bounded chunks and batch-insert parsed records."""
+    path = scanned_file.path
 
-    # Read a sample to detect format
-    sample = b""
+    def read_sample() -> bytes:
+        with open(path, "rb") as handle:
+            return handle.read(8192)
+
     try:
-        def _read_sample():
-            with open(path, "rb") as fh:
-                return fh.read(8192)
-        sample = await asyncio.to_thread(_read_sample)
+        sample = await asyncio.to_thread(read_sample)
     except OSError:
         sample = b""
 
-    fmt = detect_format(path, sample)
-    fmt_str = fmt.value
-
-    # Stream the file line by line using a blocking reader in a thread.
-    # We read the whole file into memory in chunks -- fine for the MVP
-    # since test files are small. For huge files we'd switch to a true
-    # streaming reader.
+    detected_format = detect_format(path, sample)
+    format_name = detected_format.value
     records_indexed = 0
-    batch: list = []
     line_number = 0
     byte_offset = 0
     total_lines = 0
+    parse_batch: list = []
+    read_chunk_size = max(256, min(batch_size, 8192))
 
-    # Open the file synchronously and iterate lines in a thread
-    def _read_all_lines() -> list[str]:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            return fh.readlines()
+    with open(path, "rb") as handle:
+        while True:
+            raw_lines = await asyncio.to_thread(
+                lambda: list(itertools.islice(handle, read_chunk_size))
+            )
+            if not raw_lines:
+                break
 
-    all_lines = await asyncio.to_thread(_read_all_lines)
+            for raw_line in raw_lines:
+                line_number += 1
+                total_lines += 1
+                line_start = byte_offset
+                byte_offset += len(raw_line)
+                text = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+                if not text:
+                    continue
+                if len(text) > state.config.indexing.max_line_length:
+                    text = text[: state.config.indexing.max_line_length]
 
-    for line in all_lines:
-        line_number += 1
-        total_lines += 1
-        line_len = len(line.encode("utf-8"))
-        line_start = byte_offset
-        byte_offset += line_len
+                parse_batch.append(parse_line(text, line_number, line_start, detected_format))
+                if len(parse_batch) >= batch_size:
+                    records_indexed += await write_batch(
+                        state,
+                        parse_batch,
+                        source_id,
+                        path,
+                        format_name,
+                    )
+                    parse_batch.clear()
 
-        trimmed = line.rstrip("\r\n")
-        if not trimmed:
-            continue
+    if parse_batch:
+        records_indexed += await write_batch(
+            state,
+            parse_batch,
+            source_id,
+            path,
+            format_name,
+        )
 
-        if len(trimmed) > state.config.indexing.max_line_length:
-            trimmed = trimmed[: state.config.indexing.max_line_length]
-
-        record = parse_line(trimmed, line_number, line_start, fmt)
-        batch.append(record)
-
-        if len(batch) >= batch_size:
-            count = await write_batch(state, batch, source_id, path, fmt_str)
-            records_indexed += count
-            batch.clear()
-
-    if batch:
-        count = await write_batch(state, batch, source_id, path, fmt_str)
-        records_indexed += count
-
-    # Insert/update file metadata
-    import datetime
+    indexed_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
     await state.db.execute(
         """
-        INSERT INTO files (source_id, path, file_name, extension, size_bytes, line_count,
-                            records_indexed, mtime, detected_format, last_indexed_at, status)
+        INSERT INTO files (
+            source_id, path, file_name, extension, size_bytes, line_count,
+            records_indexed, mtime, detected_format, last_indexed_at, status
+        )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'indexed')
         ON CONFLICT(source_id, path) DO UPDATE SET
             size_bytes = excluded.size_bytes,
@@ -317,18 +528,14 @@ async def _index_file(
         (
             source_id,
             str(path),
-            f.file_name,
-            f.extension,
-            f.size_bytes,
+            scanned_file.file_name,
+            scanned_file.extension,
+            scanned_file.size_bytes,
             total_lines,
             records_indexed,
-            f.mtime,
-            fmt_str,
-            datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            scanned_file.mtime,
+            format_name,
+            indexed_at,
         ),
     )
-
     return records_indexed
-
-
-import itertools  # noqa: E402  (kept for backwards compatibility)

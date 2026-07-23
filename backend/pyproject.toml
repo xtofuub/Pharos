@@ -1,7 +1,7 @@
 [project]
-name = "breachelens"
-version = "0.1.0"
-description = "Local-first breach intelligence search and entity extraction engine"
+name = "pharos-local"
+version = "0.2.0"
+description = "Local-first authorized dataset indexing and exposure analysis"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [

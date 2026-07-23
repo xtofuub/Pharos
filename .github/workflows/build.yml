@@ -43,21 +43,19 @@ jobs:
 
       - name: Run tests
         working-directory: backend
-        run: python -m pytest -q
+        run: python -m pytest -q -x --tb=short
 
       - name: Build executable
         working-directory: backend
         run: python -m PyInstaller breachelens.spec --noconfirm --clean
 
-      - name: Package Pharos executable
+      - name: Verify executable
         shell: pwsh
         run: |
-          $source = "backend/dist/BreachLens.exe"
           $target = "backend/dist/Pharos.exe"
-          if (-not (Test-Path $source)) {
-            throw "BreachLens.exe was not created"
+          if (-not (Test-Path $target)) {
+            throw "Pharos.exe was not created"
           }
-          Copy-Item $source $target -Force
           $size = (Get-Item $target).Length
           if ($size -lt 1MB) {
             throw "Pharos.exe looks unexpectedly small: $size bytes"

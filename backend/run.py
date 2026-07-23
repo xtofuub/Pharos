@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-BreachLens launcher -- one command to run everything.
+Pharos launcher -- one command to run everything.
 
     python run.py
 
@@ -32,15 +32,15 @@ BACKEND_DIR = Path(__file__).resolve().parent
 def main() -> None:
     print()
     print("  ╔══════════════════════════════════════╗")
-    print("  ║          BreachLens v0.1.0            ║")
-    print("  ║   Local breach intelligence search    ║")
+    print("  ║          Pharos v0.2.0              ║")
+    print("  ║   Local breach intelligence search  ║")
     print("  ╚══════════════════════════════════════╝")
     print()
 
     # 1. Check Python version
     if sys.version_info < MIN_PYTHON:
         print(f"  ERROR: Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+ required (you have {sys.version_info[0]}.{sys.version_info[1]}).")
-        print(f"  Download from https://python.org/downloads/")
+        print("  Download from https://python.org/downloads/")
         sys.exit(1)
 
     print(f"  Python {sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]} OK")
@@ -50,8 +50,8 @@ def main() -> None:
 
     # 3. Import and start the server
     print()
-    print(f"  Starting BreachLens on http://{HOST}:{PORT}")
-    print(f"  Default login: admin / breachelens")
+    print(f"  Starting Pharos on http://{HOST}:{PORT}")
+    print("  Default login: admin / breachelens")
     print()
     print("  Press Ctrl+C to stop.")
     print("  " + "=" * 50)
@@ -84,14 +84,14 @@ def main() -> None:
         )
     except KeyboardInterrupt:
         print()
-        print("  BreachLens stopped.")
+        print("  Pharos stopped.")
     except Exception as e:
         print(f"\n  ERROR: {e}")
         sys.exit(1)
 
 
 def ensure_deps() -> None:
-    """Check if breachelens package is importable; if not, pip install."""
+    """Check if the Pharos package is importable; if not, install it."""
     try:
         import breachelens  # noqa: F401
         import fastapi  # noqa: F401
@@ -107,9 +107,9 @@ def ensure_deps() -> None:
         subprocess.check_call(pip, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         print("  Dependencies installed OK")
     except subprocess.CalledProcessError as e:
-        print(f"\n  ERROR: Failed to install dependencies.")
-        print(f"  Run this manually:")
-        print(f"    {sys.executable} -m pip install -e \"{BACKEND_DIR}\"")
+        print("\n  ERROR: Failed to install dependencies.")
+        print("  Run this manually:")
+        print(f'    {sys.executable} -m pip install -e "{BACKEND_DIR}"')
         print(f"\n  Pip error: {e}")
         sys.exit(1)
 

@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 
 echo.
-echo   Building BreachLens.exe...
+echo   Building Pharos.exe...
 echo.
 
 echo   [1/3] Installing dependencies...
@@ -24,7 +24,7 @@ if errorlevel 1 (
 
 echo   [3/3] Done!
 echo.
-echo   BreachLens.exe is at: dist\BreachLens.exe
+echo   Pharos.exe is at: dist\Pharos.exe
 echo   Double-click to run. Delete to uninstall.
 echo.
 pause

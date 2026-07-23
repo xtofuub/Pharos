@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for BreachLens standalone executable."""
+"""PyInstaller spec for Pharos standalone executable."""
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
@@ -59,7 +59,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='BreachLens',
+    name='Pharos',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

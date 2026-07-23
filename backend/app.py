@@ -1,5 +1,5 @@
 """
-BreachLens standalone entry point -- used by PyInstaller to build the .exe.
+Pharos standalone entry point -- used by PyInstaller to build the .exe.
 
 When double-clicked:
   1. Starts the FastAPI backend on 127.0.0.1:8443
@@ -21,7 +21,7 @@ def main() -> None:
 
     print()
     print("  ===========================================")
-    print("            BreachLens v0.1.0")
+    print("            Pharos v0.2.0")
     print("       Local breach intelligence search")
     print("  ===========================================")
     print()
@@ -55,7 +55,7 @@ def main() -> None:
         )
     except KeyboardInterrupt:
         print()
-        print("  BreachLens stopped.")
+        print("  Pharos stopped.")
     except Exception as e:
         print(f"\n  ERROR: {e}")
         input("\n  Press Enter to exit...")
