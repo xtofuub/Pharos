@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: build-exe-${{ github.ref }}
@@ -26,28 +26,6 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref }}
-          fetch-depth: 0
-
-      - name: Apply staged source improvements
-        if: ${{ hashFiles('.github/pharos-patch/part*') != '' }}
-        shell: pwsh
-        run: |
-          $parts = Get-ChildItem ".github/pharos-patch/part*" | Sort-Object Name
-          $encoded = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
-          $gzipPath = Join-Path $env:RUNNER_TEMP "pharos-improvements.patch.gz"
-          $patchPath = Join-Path $env:RUNNER_TEMP "pharos-improvements.patch"
-          [System.IO.File]::WriteAllBytes($gzipPath, [Convert]::FromBase64String($encoded))
-          python -c "import gzip,pathlib,sys; pathlib.Path(sys.argv[2]).write_bytes(gzip.decompress(pathlib.Path(sys.argv[1]).read_bytes()))" $gzipPath $patchPath
-          git apply --check $patchPath
-          git apply $patchPath
-          Remove-Item ".github/pharos-patch" -Recurse -Force
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Fix folder scanning and indexing"
-          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -71,7 +49,7 @@ jobs:
         working-directory: backend
         run: python -m PyInstaller breachelens.spec --noconfirm --clean
 
-      - name: Verify Pharos executable
+      - name: Verify executable
         shell: pwsh
         run: |
           $target = "backend/dist/Pharos.exe"
