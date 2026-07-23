@@ -1,0 +1,96 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-exe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    name: Build Pharos.exe
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install dependencies
+        working-directory: backend
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]" pyinstaller
+
+      - name: Run tests
+        working-directory: backend
+        run: python -m pytest -q
+
+      - name: Build executable
+        working-directory: backend
+        run: python -m PyInstaller breachelens.spec --noconfirm --clean
+
+      - name: Package Pharos executable
+        shell: pwsh
+        run: |
+          $source = "backend/dist/BreachLens.exe"
+          $target = "backend/dist/Pharos.exe"
+          if (-not (Test-Path $source)) {
+            throw "BreachLens.exe was not created"
+          }
+          Copy-Item $source $target -Force
+          $size = (Get-Item $target).Length
+          if ($size -lt 1MB) {
+            throw "Pharos.exe looks unexpectedly small: $size bytes"
+          }
+          Get-FileHash $target -Algorithm SHA256
+
+      - name: Upload executable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pharos-Windows-${{ github.sha }}
+          path: backend/dist/Pharos.exe
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  publish-release:
+    name: Publish tagged release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download built executable
+        uses: actions/download-artifact@v4
+        with:
+          name: Pharos-Windows-${{ github.sha }}
+          path: release
+
+      - name: Attach executable to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/Pharos.exe
+          generate_release_notes: true
+          fail_on_unmatched_files: true
