@@ -8,7 +8,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from breachelens import api
@@ -20,6 +20,21 @@ from breachelens.security.auth import hash_password
 from breachelens.state import AppState
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+def _dashboard_html() -> str:
+    """Render the bundled dashboard with local-only Pharos enhancements."""
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    html = html.replace("BreachLens", "Pharos")
+    html = html.replace(
+        "@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');",
+        "",
+    )
+    enhancement = '<script src="/static/pharos-improvements.js"></script>'
+    if enhancement not in html:
+        html = html.replace("</body>", f"{enhancement}\n</body>")
+    return html
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -119,13 +134,13 @@ def create_app() -> FastAPI:
 
         @app.get("/")
         async def index():
-            return FileResponse(str(STATIC_DIR / "index.html"))
+            return HTMLResponse(_dashboard_html())
 
         @app.get("/{path:path}")
         async def spa_fallback(path: str):
             if path.startswith("api/") or path.startswith("auth/"):
                 raise HTTPException(status_code=404)
-            return FileResponse(str(STATIC_DIR / "index.html"))
+            return HTMLResponse(_dashboard_html())
 
     app.add_exception_handler(AppError, app_error_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
