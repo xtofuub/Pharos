@@ -1,4 +1,4 @@
-"""BreachLens backend -- FastAPI bootstrap."""
+"""Pharos backend -- FastAPI bootstrap."""
 from __future__ import annotations
 
 import logging
@@ -30,7 +30,6 @@ log = logging.getLogger("breachelens")
 
 async def _seed_defaults(state: AppState) -> None:
     """Seed default admin user + service rules on first run."""
-    # Admin user
     admin_count = await state.db.fetchval(
         "SELECT COUNT(*) FROM users WHERE username = 'admin'"
     )
@@ -42,7 +41,6 @@ async def _seed_defaults(state: AppState) -> None:
         )
         log.info("created default admin user (password: breachelens -- change immediately)")
 
-    # Service rules
     rules_count = await state.db.fetchval("SELECT COUNT(*) FROM service_rules")
     if not rules_count:
         for service, domain in default_service_mappings():
@@ -52,7 +50,6 @@ async def _seed_defaults(state: AppState) -> None:
             )
         log.info("seeded default service classification rules")
 
-    # Populate in-memory service cache from DB
     rows = await state.db.fetchall(
         "SELECT service_name, domain_pattern FROM service_rules"
     )
@@ -65,54 +62,47 @@ async def lifespan(app: FastAPI):
     """Application startup/shutdown lifecycle."""
     config = load_config()
     log.info(
-        "starting BreachLens backend bind=%s:%d",
+        "starting Pharos backend bind=%s:%d",
         config.server.bind_addr,
         config.server.port,
     )
 
-    # Ensure data dir exists
     config.storage.data_dir.mkdir(parents=True, exist_ok=True)
     config.storage.index_dir.mkdir(parents=True, exist_ok=True)
     config.storage.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Initialize DB
     db = Database(config.storage.db_path)
     await db.connect()
     await db.run_migrations()
 
-    # Build app state
     state = AppState(config=config, db=db)
     app.state.app_state = state
 
-    # Seed defaults
     await _seed_defaults(state)
 
     yield
 
-    # Shutdown
     await db.close()
-    log.info("BreachLens backend stopped")
+    log.info("Pharos backend stopped")
 
 
 def create_app() -> FastAPI:
     """Build the FastAPI application."""
     app = FastAPI(
-        title="BreachLens",
+        title="Pharos",
         description="Local-first breach intelligence search and entity extraction engine",
-        version="0.1.0",
+        version="0.2.0",
         lifespan=lifespan,
     )
 
-    # CORS (permissive for local dev -- frontend on :5173, backend on :8443)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # local-only, so permissive is fine
+        allow_origins=["*"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
-    # Register routers
     app.include_router(api.auth_router)
     app.include_router(api.health_router)
     app.include_router(api.sources_router)
@@ -124,7 +114,6 @@ def create_app() -> FastAPI:
     app.include_router(api.settings_router)
     app.include_router(api.stats_router)
 
-    # Serve the frontend (single-file HTML) at /
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -132,14 +121,12 @@ def create_app() -> FastAPI:
         async def index():
             return FileResponse(str(STATIC_DIR / "index.html"))
 
-        # SPA fallback: any non-API path returns index.html
         @app.get("/{path:path}")
         async def spa_fallback(path: str):
             if path.startswith("api/") or path.startswith("auth/"):
                 raise HTTPException(status_code=404)
             return FileResponse(str(STATIC_DIR / "index.html"))
 
-    # Error handlers
     app.add_exception_handler(AppError, app_error_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
