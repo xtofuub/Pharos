@@ -1,6 +1,7 @@
 """Input validation: paths, queries, regex patterns."""
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -9,21 +10,44 @@ from breachelens.errors import PathNotAllowedError, BadRequestError, RegexReject
 CATASTROPHIC_PATTERNS = ["(a+)+", "(a*)*", "(.+)+", ".*.*.*.*.*.*"]
 
 
+def normalize_user_path(path: str) -> str:
+    """Normalize paths pasted from Windows Explorer or a terminal.
+
+    Accepts surrounding quotes, environment variables such as ``%USERPROFILE%``,
+    forward slashes on Windows, and ``~``. Browser file inputs often return a
+    useless ``C:\\fakepath`` value, so reject that with a useful explanation.
+    """
+    value = (path or "").strip().strip('"').strip("'").strip()
+    if not value:
+        raise BadRequestError("folder path must not be empty")
+    if "fakepath" in value.lower():
+        raise BadRequestError(
+            "the browser did not provide the real folder path; use Browse folder or paste the path from File Explorer"
+        )
+    value = os.path.expandvars(os.path.expanduser(value))
+    return value
+
+
 def validate_path(path: str) -> Path:
-    p = Path(path)
+    normalized = normalize_user_path(path)
+    p = Path(normalized)
     if not p.is_absolute():
-        raise PathNotAllowedError(f"path must be absolute: {path}")
+        raise PathNotAllowedError(f"path must be absolute: {normalized}")
     try:
         canonical = p.resolve(strict=True)
     except FileNotFoundError:
-        raise NotFoundError(f"path does not exist: {path}")
+        raise NotFoundError(f"path does not exist: {normalized}")
+    except OSError as exc:
+        raise PathNotAllowedError(f"cannot access path: {normalized} ({exc})") from exc
     return canonical
 
 
 def validate_source_folder(path: str) -> Path:
     p = validate_path(path)
     if not p.is_dir():
-        raise BadRequestError(f"not a directory: {path}")
+        raise BadRequestError(f"not a directory: {p}")
+    if not os.access(p, os.R_OK):
+        raise PathNotAllowedError(f"folder is not readable: {p}")
     return p
 
 
@@ -33,7 +57,6 @@ def sanitize_query(q: str) -> str:
         raise BadRequestError("query must not be empty")
     if len(trimmed) > 1024:
         raise BadRequestError("query too long (max 1024 chars)")
-    # Strip control characters (except tab)
     return "".join(ch for ch in trimmed if ord(ch) >= 32 or ch == "\t")
 
 
