@@ -1,0 +1,6 @@
+email	username	url	ip	hash	phone
+fake.user@gmail.com	jsmith	https://accounts.google.com/signin	73.14.224.18	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855	+1-555-019-2841
+fake.user@yahoo.com	yahoo_user	https://login.yahoo.com	98.137.11.163	a94a8fe5ccb19ba61c4c0873d391e987982fbbd3	+1-555-028-1937
+fake.user@outlook.com	outlook_user	https://login.live.com	204.79.197.222	5f4dcc3b5aa765d61d8327deb882cf99	+1-555-037-2840
+fake.user@github.com	devuser_42	https://github.com/login	140.82.114.4	5ebe2294ecd0e0f08eab7690d2a6ee69	+1-555-046-1958
+fake.user@discord.com	discord_user	https://discord.com/login	162.159.135.232	098f6bcd4621d373cade4e832627b4f6	+1-555-055-2039

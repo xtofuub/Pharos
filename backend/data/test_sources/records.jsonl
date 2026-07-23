@@ -1,0 +1,5 @@
+{"email":"fake.user@gmail.com","username":"jsmith","password":"FAKE_MASK_ME_001","url":"https://accounts.google.com/signin","ip":"73.14.224.18"}
+{"email":"fake.user@yahoo.com","username":"yahoo_user","password":"FAKE_MASK_ME_002","url":"https://login.yahoo.com","ip":"98.137.11.163"}
+{"email":"fake.user@outlook.com","username":"outlook_user","password":"FAKE_MASK_ME_003","url":"https://login.live.com","ip":"204.79.197.222"}
+{"email":"fake.user@protonmail.com","username":"proton_user","password":"FAKE_MASK_ME_004","url":"https://proton.me/login","ip":"185.70.40.18"}
+{"email":"fake.user@github.com","username":"devuser_42","password":"FAKE_MASK_ME_005","url":"https://github.com/login","ip":"140.82.114.4"}

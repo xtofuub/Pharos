@@ -1,0 +1,165 @@
+"""BreachLens backend -- FastAPI bootstrap."""
+from __future__ import annotations
+
+import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
+from breachelens import api
+from breachelens.config import load_config
+from breachelens.db import Database
+from breachelens.entities import default_service_mappings, populate_service_cache
+from breachelens.errors import AppError, app_error_handler, unhandled_exception_handler
+from breachelens.security.auth import hash_password
+from breachelens.state import AppState
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+log = logging.getLogger("breachelens")
+
+
+async def _seed_defaults(state: AppState) -> None:
+    """Seed default admin user + service rules on first run."""
+    # Admin user
+    admin_count = await state.db.fetchval(
+        "SELECT COUNT(*) FROM users WHERE username = 'admin'"
+    )
+    if not admin_count:
+        phc = hash_password("breachelens")
+        await state.db.execute(
+            "INSERT INTO users (username, password_hash, role, must_change_password) VALUES (?, ?, 'admin', 1)",
+            ("admin", phc),
+        )
+        log.info("created default admin user (password: breachelens -- change immediately)")
+
+    # Service rules
+    rules_count = await state.db.fetchval("SELECT COUNT(*) FROM service_rules")
+    if not rules_count:
+        for service, domain in default_service_mappings():
+            await state.db.execute(
+                "INSERT OR IGNORE INTO service_rules (service_name, domain_pattern, added_by) VALUES (?, ?, 'system')",
+                (service, domain),
+            )
+        log.info("seeded default service classification rules")
+
+    # Populate in-memory service cache from DB
+    rows = await state.db.fetchall(
+        "SELECT service_name, domain_pattern FROM service_rules"
+    )
+    populate_service_cache([(r["domain_pattern"], r["service_name"]) for r in rows])
+    log.info("service classifier cache populated (%d rules)", len(rows))
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application startup/shutdown lifecycle."""
+    config = load_config()
+    log.info(
+        "starting BreachLens backend bind=%s:%d",
+        config.server.bind_addr,
+        config.server.port,
+    )
+
+    # Ensure data dir exists
+    config.storage.data_dir.mkdir(parents=True, exist_ok=True)
+    config.storage.index_dir.mkdir(parents=True, exist_ok=True)
+    config.storage.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Initialize DB
+    db = Database(config.storage.db_path)
+    await db.connect()
+    await db.run_migrations()
+
+    # Build app state
+    state = AppState(config=config, db=db)
+    app.state.app_state = state
+
+    # Seed defaults
+    await _seed_defaults(state)
+
+    yield
+
+    # Shutdown
+    await db.close()
+    log.info("BreachLens backend stopped")
+
+
+def create_app() -> FastAPI:
+    """Build the FastAPI application."""
+    app = FastAPI(
+        title="BreachLens",
+        description="Local-first breach intelligence search and entity extraction engine",
+        version="0.1.0",
+        lifespan=lifespan,
+    )
+
+    # CORS (permissive for local dev -- frontend on :5173, backend on :8443)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # local-only, so permissive is fine
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Register routers
+    app.include_router(api.auth_router)
+    app.include_router(api.health_router)
+    app.include_router(api.sources_router)
+    app.include_router(api.indexing_router)
+    app.include_router(api.search_router)
+    app.include_router(api.results_router)
+    app.include_router(api.aggregations_router)
+    app.include_router(api.audit_router)
+    app.include_router(api.settings_router)
+    app.include_router(api.stats_router)
+
+    # Serve the frontend (single-file HTML) at /
+    if STATIC_DIR.exists():
+        app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+        @app.get("/")
+        async def index():
+            return FileResponse(str(STATIC_DIR / "index.html"))
+
+        # SPA fallback: any non-API path returns index.html
+        @app.get("/{path:path}")
+        async def spa_fallback(path: str):
+            if path.startswith("api/") or path.startswith("auth/"):
+                raise HTTPException(status_code=404)
+            return FileResponse(str(STATIC_DIR / "index.html"))
+
+    # Error handlers
+    app.add_exception_handler(AppError, app_error_handler)
+    app.add_exception_handler(Exception, unhandled_exception_handler)
+
+    return app
+
+
+app = create_app()
+
+
+def main() -> None:
+    """Run the server with uvicorn."""
+    config = load_config()
+    uvicorn.run(
+        "breachelens.main:app",
+        host=config.server.bind_addr,
+        port=config.server.port,
+        reload=False,
+        log_level="info",
+    )
+
+
+if __name__ == "__main__":
+    main()

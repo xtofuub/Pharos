@@ -1,0 +1,10 @@
+fake.user.one@gmail.com:fake_password_123
+fake.user.two@yahoo.com:fake_password_456
+fake.user.three@hotmail.com:fake_password_789
+testuser.discord@discord.com:fake_discord_pass_001
+another.user@outlook.com:fake_password_outlook
+steam.player@steam.com:fake_steam_pass_002
+dev.user@github.com:fake_github_token_003
+admin@microsoft.com:fake_msft_pass_004
+user@paypal.com:fake_paypal_pass_005
+trader@coinbase.com:fake_crypto_pass_006

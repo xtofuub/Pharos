@@ -1,0 +1,39 @@
+[project]
+name = "breachelens"
+version = "0.1.0"
+description = "Local-first breach intelligence search and entity extraction engine"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "aiosqlite>=0.20",
+    "passlib[argon2]>=1.7",
+    "python-multipart>=0.0.9",
+    "regex>=2024.7",
+    "tldextract>=5.1",
+    "python-jose[cryptography]>=3.3",
+    "itsdangerous>=2.2",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["breachelens*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

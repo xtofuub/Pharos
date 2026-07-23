@@ -1,4 +1,4 @@
-# BreachLens
+# Pharos
 
 > Local-first breach intelligence search and entity extraction engine.
 
@@ -179,53 +179,27 @@ backend/
 │   ├── main.py             # FastAPI bootstrap + static file serving
 │   ├── config.py
 │   ├── state.py
-│   ├── api/                # REST API routes
-│   ├── db/                 # SQLite connection, migrations, models
-│   ├── entities/           # Entity extraction and classification
-│   ├── index/              # Search query engine
-│   ├── ingest/             # Streaming parsers and indexer
-│   ├── security/           # Auth, masking, audit, validation
-│   └── static/index.html   # Dashboard
-└── tests/
+│   ├── static/index.html   # Single-file frontend (all 7 pages)
+│   ├── api/                # HTTP endpoints
+│   ├── db/                 # SQLite layer
+│   ├── index/              # FTS5 query builder
+│   ├── ingest/             # Streaming parser + format detection
+│   ├── entities/           # Detectors, URL normalizer, classifiers
+│   └── security/           # Masking, auth, audit, validation
+└── tests/                  # 36 pytest tests
 ```
 
 ---
 
 ## Security model
 
-- Binds to `127.0.0.1` by default; refuses non-loopback bind unless explicitly configured
-- Argon2id password hashing
-- Bearer token sessions with configurable TTL
-- Sensitive fields masked by default
-- Every reveal is confirmation-gated and audit-logged
-- Path traversal protection on all source folders
-- Symlinks skipped by default
-- Regex patterns length-limited with timeout
-- Rate limiting per session
-- No outbound network calls, telemetry, or cloud dependencies
-- CSP headers, CORS restricted to localhost
-
----
-
-## Tests
-
-```bash
-cd backend
-pip install -e ".[dev]"
-pytest -v
-```
-
----
-
-## Building a standalone executable
-
-```bash
-cd backend
-pip install pyinstaller
-pyinstaller breachelens.spec
-```
-
-Output: `backend/dist/BreachLens.exe`
+- **Local-only by default.** Server binds to `127.0.0.1`.
+- **Argon2id password hashing.** No plaintext passwords stored.
+- **Sessions** are 48-char random tokens, in-memory only.
+- **Path allowlisting.** Reveal endpoints refuse to read files outside indexed sources.
+- **No shell execution.** No subprocess, no eval.
+- **No telemetry.** No outbound HTTP.
+- **Audit log** records query hashes only, never raw queries or raw record values.
 
 ---
 

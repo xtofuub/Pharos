@@ -1,0 +1,39 @@
+URL: https://accounts.google.com/signin
+Username: fake.user@gmail.com
+Password: FAKE_MASK_ME_001
+Host: accounts.google.com
+
+URL: https://mail.google.com/mail/u/0/
+Username: fake.user@gmail.com
+Password: FAKE_MASK_ME_002
+Host: mail.google.com
+
+URL: https://login.microsoftonline.com/
+Username: fake.user@outlook.com
+Password: FAKE_MASK_ME_003
+Host: login.microsoftonline.com
+
+URL: https://discord.com/login
+Username: fake_discord_user
+Password: FAKE_MASK_ME_004
+Host: discord.com
+
+URL: https://github.com/login
+Username: fake_github_user
+Password: FAKE_MASK_ME_005
+Host: github.com
+
+URL: https://steamcommunity.com/login/home/
+Username: fake_steam_user
+Password: FAKE_MASK_ME_006
+Host: steamcommunity.com
+
+URL: https://www.paypal.com/signin
+Username: fake_paypal_user
+Password: FAKE_MASK_ME_007
+Host: www.paypal.com
+
+URL: https://www.coinbase.com/login
+Username: fake_crypto_user
+Password: FAKE_MASK_ME_008
+Host: www.coinbase.com
