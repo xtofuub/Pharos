@@ -1,7 +1,7 @@
 [project]
-name = "breachelens"
-version = "0.1.0"
-description = "Local-first breach intelligence search and entity extraction engine"
+name = "pharos-local"
+version = "0.3.0"
+description = "Local-first breach intelligence, identity clustering, and search engine"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
@@ -20,11 +20,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=8.3",
-    "pytest-asyncio>=0.23",
-    "httpx>=0.27",
-]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.23", "httpx>=0.27"]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

@@ -41,12 +41,12 @@ def parse_line(
     line_number: int,
     byte_offset: int,
     format: RecordFormat,
+    byte_length: int | None = None,
 ) -> ParsedRecord:
     """Parse a single line into a ParsedRecord."""
-    byte_length = len(line.encode("utf-8"))
+    byte_length = byte_length if byte_length is not None else len(line.encode("utf-8"))
     raw_line = line
 
-    # Pick the right entity extractor for the format
     if format in (RecordFormat.CSV, RecordFormat.TSV):
         entities = extract_csv_entities(line, format)
     elif format == RecordFormat.JSONL:
@@ -62,10 +62,7 @@ def parse_line(
     else:
         entities = extract_entities(line)
 
-    # Build searchable text: original line + extracted entities (for full-text search)
     searchable = entities.merge_into_searchable_text(raw_line)
-
-    # Pick primary values for dedupe
     primary_url = entities.urls[0] if entities.urls else None
     primary_email = entities.emails[0] if entities.emails else None
     primary_username = entities.usernames[0] if entities.usernames else None
@@ -158,8 +155,7 @@ def _extract_combo(line: str) -> ExtractedEntities:
         if normalized is not None and not any(u.normalized == normalized.normalized for u in out.urls):
             out.urls.append(normalized)
         out.usernames.append(parts[1])
-        if len(parts) >= 3:
-            out.possible_passwords.append(parts[2])
+        out.possible_passwords.append(parts[2])
     return out
 
 

@@ -1,207 +1,109 @@
 # Pharos
 
-> Local-first breach intelligence search and entity extraction engine.
+> Local-first breach intelligence search, entity extraction, and identity correlation.
 
-Self-hosted, local-only. No cloud. No telemetry. Search huge files for emails,
-URLs, usernames, hashes, IPs, and credentials — with automatic entity extraction,
-URL normalization, and service classification.
+Pharos indexes authorized local datasets without uploading them anywhere. It can search emails, usernames, URLs, domains, IPs, hashes, phones, and other structured indicators, then bundle repeated email observations into a single identity profile.
 
-**For authorized security analysis only. All test data is synthetic.**
+## Pharos 0.3
 
----
+- Native Windows folder picker and scan preview
+- Streaming indexing for large files
+- Clean re-indexing without duplicate rows
+- Automatic removal of stale results for deleted or moved files
+- Permission and file-level error reporting
+- Exact, contains, FTS5-ranked, and real timeout-protected regex search
+- Multi-entity indexing: every email, username, URL, phone, IP, hash, service, and domain on a line is stored
+- Identity profiles grouped by normalized email
+- Gmail alias correlation (`john.smith+tag@gmail.com` → `johnsmith@gmail.com`)
+- Secure reveal: the browser sends only a record ID; trusted file offsets stay server-side
+- Mandatory password change after the first login
+- Local database backup, reset-index, and open-data-folder controls
+- Windows executable builds through GitHub Actions
 
-## Download the Windows executable
+## Download the Windows build
 
-GitHub Actions builds `BreachLens.exe` automatically on pushes to `main` or
-`master`, on pull requests, and when run manually from the **Actions** tab.
+Open **Actions → Build Windows EXE**, choose the latest successful run, and download the `Pharos-Windows-...` artifact.
 
-To download a normal build:
-
-1. Open the repository's **Actions** tab.
-2. Open the latest successful **Build Windows EXE** run.
-3. Download the `BreachLens-Windows-...` artifact.
-
-To publish the executable on the repository's **Releases** page, push a version
-tag such as `v0.1.0`:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-The tagged workflow creates a GitHub Release and attaches `BreachLens.exe`.
-
----
-
-## Quick start (one command)
-
-### Windows
-
-1. Install [Python 3.11+](https://python.org/downloads/) (check "Add to PATH")
-2. Double-click `run.bat` — or open Command Prompt and run:
-   ```
-   cd breachelens\backend
-   python run.py
-   ```
-
-### macOS / Linux
+Tagged builds are attached to GitHub Releases:
 
 ```bash
-cd breachelens/backend
-python3 run.py
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
-That's it. The script will:
-- Install dependencies automatically (first run only)
-- Start the server on `http://127.0.0.1:8443`
-- Open your browser to the dashboard
-
-**Default login:** `admin` / `breachelens`
-
----
-
-## What it does
-
-BreachLens processes very large `.txt`, `.csv`, `.tsv`, `.log`, `.jsonl`, and `.sql`
-files containing database dumps, combo lists, credentials, stealer logs, URLs,
-emails, and hashes.
-
-For every line, it automatically:
-- **Extracts entities:** emails, usernames, URLs, IPs (v4/v6), hashes (MD5/SHA1/SHA256),
-  phone numbers, credit cards (Luhn-validated), labeled passwords/tokens
-- **Normalizes URLs:** splits into host, root domain, subdomain, path, endpoint type
-- **Classifies services:** maps `accounts.google.com` → `Google`, `login.microsoftonline.com` → `Microsoft`, etc. (56+ known services)
-- **Classifies endpoints:** `/login` → login, `/admin` → admin, `/api/v1` → api, etc.
-- **Masks sensitive values** by default — passwords, tokens, credit cards are never shown without explicit reveal
-- **Audit-logs everything** with query hashes only (never raw queries or raw record values)
-
----
-
-## Using the dashboard
-
-### 1. Add a source folder
-Go to **Sources** → click **Add source folder** → enter the absolute path to a folder
-you're authorized to process. Confirm authorization.
-
-### 2. Start indexing
-Click **Reindex** on the source, or go to **Indexing** → the job runs in the background.
-Watch live progress: files processed, records indexed, throughput (lines/sec, MB/sec).
-
-### 3. Search
-Go to **Search** (or press **Ctrl+K** / **⌘K**). Search by email, domain, username, IP,
-hash, URL, or free text. Results are masked by default. Click the 👁 eye icon to reveal
-a specific record (confirmation required, audit-logged).
-
-### 4. Audit trail
-Go to **Audit** to see every search and reveal event. Only query hashes are stored —
-never the raw query text.
-
----
-
-## API
-
-All endpoints are on `http://127.0.0.1:8443`. Auth via `Authorization: Bearer <token>`.
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/auth/login` | Login (username + password) |
-| POST | `/auth/logout` | Revoke session |
-| GET | `/api/health` | Health check |
-| GET | `/api/stats` | Aggregate stats |
-| GET | `/api/sources` | List source folders |
-| POST | `/api/sources` | Add a source folder |
-| DELETE | `/api/sources/:id` | Remove a source folder |
-| POST | `/api/index/start/:source_id` | Start indexing |
-| POST | `/api/index/cancel` | Cancel running job |
-| GET | `/api/index/status` | Live job snapshot |
-| GET | `/api/index/jobs` | Job history |
-| POST | `/api/search` | Search the index |
-| POST | `/api/results/:id/reveal` | Reveal a record (audit-logged) |
-| GET | `/api/aggregations/services` | Group by service |
-| GET | `/api/aggregations/domains` | Group by root domain |
-| GET | `/api/audit` | Audit log (query hashes only) |
-| GET | `/api/settings` | Read config |
-
-### Example: search via curl
+## Run from source
 
 ```bash
-# Login
-TOKEN=$(curl -s -X POST http://127.0.0.1:8443/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"breachelens"}' \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
-
-# Search
-curl -s -X POST http://127.0.0.1:8443/api/search \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"query":"fake.user@gmail.com","mode":"smart"}'
+cd backend
+python run.py
 ```
 
----
+Then open `http://127.0.0.1:8443`.
 
-## Configuration
+First login:
 
-Environment variables (prefix `BREACHLENS__`, nested with `__`):
-
-```bash
-BREACHLENS__SERVER__BIND_ADDR=127.0.0.1    # NEVER use 0.0.0.0 unless you understand the risk
-BREACHLENS__SERVER__PORT=8443
-BREACHLENS__STORAGE__DEFAULT_MODE=offset    # offset | full
-BREACHLENS__INDEXING__BATCH_SIZE=4096
-BREACHLENS__SEARCH__MAX_RESULTS_PER_QUERY=1000
-BREACHLENS__REGEX_SAFETY__MAX_PATTERN_LENGTH=256
-BREACHLENS__AUTH__ALLOW_REVEAL=true         # disable to forbid reveals entirely
+```text
+username: admin
+password: breachelens
 ```
 
----
+Pharos requires a new password before the dashboard can be used.
 
-## Architecture
+## Supported files
 
-- **Backend:** Python 3.11+ / FastAPI / Uvicorn
-- **Database:** SQLite (aiosqlite async) — metadata + structured records
-- **Search:** SQLite FTS5 (built-in full-text search) + b-tree indexes for exact-match
-- **Frontend:** Single-file HTML (vanilla JS, no build step, served by FastAPI)
-- **Auth:** Argon2id (passlib) + in-memory sessions
-- **Deployment:** Local-only, default bind `127.0.0.1`
+`.txt`, `.csv`, `.tsv`, `.log`, `.jsonl`, and `.sql` are enabled by default. Extensions can be changed for each source.
 
-### Project structure
+## Identity profiles
 
-```
-backend/
-├── run.py                  # ← Run this (auto-installs deps, opens browser)
-├── run.bat                 # Windows double-click launcher
-├── run.sh                  # macOS/Linux launcher
-├── pyproject.toml
-├── migrations/             # SQLite schema
-├── data/test_sources/      # Synthetic test data
-├── breachelens/
-│   ├── main.py             # FastAPI bootstrap + static file serving
-│   ├── config.py
-│   ├── state.py
-│   ├── static/index.html   # Single-file frontend (all 7 pages)
-│   ├── api/                # HTTP endpoints
-│   ├── db/                 # SQLite layer
-│   ├── index/              # FTS5 query builder
-│   ├── ingest/             # Streaming parser + format detection
-│   ├── entities/           # Detectors, URL normalizer, classifiers
-│   └── security/           # Masking, auth, audit, validation
-└── tests/                  # 36 pytest tests
+An identity begins with a canonical email address. Every record containing that email is linked to the profile, along with associated:
+
+- email aliases
+- usernames
+- services and domains
+- URLs and hosts
+- phone numbers
+- IP addresses
+- hashes and detected secret types
+- source records and files
+
+Pharos does not automatically merge unrelated non-email identifiers. That avoids aggressive false-positive identity matches.
+
+## Data location
+
+Windows and other platforms currently store local application data under:
+
+```text
+~/.local/share/breachelens/
 ```
 
----
+The directory name remains `breachelens` for compatibility with earlier builds.
 
 ## Security model
 
-- **Local-only by default.** Server binds to `127.0.0.1`.
-- **Argon2id password hashing.** No plaintext passwords stored.
-- **Sessions** are 48-char random tokens, in-memory only.
-- **Path allowlisting.** Reveal endpoints refuse to read files outside indexed sources.
-- **No shell execution.** No subprocess, no eval.
-- **No telemetry.** No outbound HTTP.
-- **Audit log** records query hashes only, never raw queries or raw record values.
+- Binds to loopback only by default
+- No telemetry or cloud upload
+- Argon2 password hashing
+- Mandatory first-login password change
+- Sensitive values masked by default
+- Reveal events are audit logged
+- Reveal paths and offsets are loaded from SQLite, not trusted from the browser
+- Changed source files must be re-indexed before reveal
+- Regex matching has per-row execution timeouts and result caps
 
----
+## Development
+
+```bash
+cd backend
+python -m pip install -e ".[dev]"
+python -m pytest -q
+python -m PyInstaller breachelens.spec --noconfirm --clean
+```
+
+The Windows executable is written to `backend/dist/Pharos.exe`.
+
+## Legal
+
+For authorized security analysis only. The operator is responsible for ensuring that all indexed data is handled lawfully and with appropriate permission.
 
 ## License
 

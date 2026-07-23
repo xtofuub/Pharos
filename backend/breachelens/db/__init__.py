@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Iterable, List, Optional, Sequence, Tuple
 
 import aiosqlite
+import regex as safe_regex
 
 from breachelens.errors import DatabaseError
 
@@ -31,6 +32,16 @@ class Database:
         await self._conn.execute("PRAGMA synchronous=NORMAL")
         await self._conn.execute("PRAGMA foreign_keys=ON")
         await self._conn.execute("PRAGMA busy_timeout=5000")
+
+        def _regexp(pattern: str, value: str | None) -> int:
+            if value is None:
+                return 0
+            try:
+                return 1 if safe_regex.search(pattern, value, timeout=0.025) else 0
+            except (TimeoutError, safe_regex.error):
+                return 0
+
+        await self._conn.create_function("REGEXP", 2, _regexp)
         await self._conn.commit()
 
     async def close(self) -> None:

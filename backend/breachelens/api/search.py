@@ -60,10 +60,10 @@ async def search(
         page=body.page,
         page_size=body.page_size,
         sort=body.sort,
+        max_results=state.config.search.max_results_per_query,
     )
     response = await execute_search(state.db, req)
 
-    # Audit log (query hash only, never raw query)
     filters_used = [k for k, v in (body.filters.model_dump() if body.filters else {}).items() if v]
     audit = AuditLogger(state.db)
     await audit.log_search(
@@ -73,5 +73,4 @@ async def search(
         filters_used=filters_used,
         result_count=response["total"],
     )
-
     return response

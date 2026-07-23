@@ -1,62 +1,64 @@
-name: Prepare Pharos 0.3
-
+name: Build Windows EXE
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
-
 permissions:
-  contents: write
-
+  contents: read
 concurrency:
-  group: pharos-main-import
+  group: build-exe-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
-  import-source:
-    name: Import verified source
-    runs-on: ubuntu-latest
+  build-windows:
+    name: Build Pharos.exe
+    runs-on: windows-latest
     steps:
-      - name: Check out main
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
         with:
-          ref: main
-          fetch-depth: 0
-
-      - name: Check payload completeness
-        id: payload
-        shell: bash
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Install dependencies
+        working-directory: backend
+        shell: pwsh
         run: |
-          set -euo pipefail
-          complete=true
-          for number in 000 001 002 003 004 005 006; do
-            if [[ ! -f ".pharos-main-import/chunk${number}" ]]; then
-              complete=false
-            fi
-          done
-          echo "complete=${complete}" >> "$GITHUB_OUTPUT"
-          if [[ "$complete" != "true" ]]; then
-            echo "Waiting for all verified source chunks; exiting successfully."
-          fi
-
-      - name: Verify and import source
-        if: steps.payload.outputs.complete == 'true'
-        shell: bash
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]" "pyinstaller>=6.10,<7"
+      - name: Run tests
+        working-directory: backend
+        run: python -m pytest -q
+      - name: Build executable
+        working-directory: backend
+        run: python -m PyInstaller breachelens.spec --noconfirm --clean
+      - name: Verify executable
+        shell: pwsh
         run: |
-          set -euo pipefail
-          cat .pharos-main-import/chunk* > /tmp/pharos-0.3.b64
-          echo "4ff40bd87798a6680b809b120a990478895741c0187b5344fa8ac645245a4b76  /tmp/pharos-0.3.b64" | sha256sum -c -
-          base64 --decode /tmp/pharos-0.3.b64 > /tmp/pharos-0.3.tar.xz
-          echo "863da2cf5a2e7e5e5d6131e655516910169b85a81d65cad7f4abe9be4b2efcd1  /tmp/pharos-0.3.tar.xz" | sha256sum -c -
-          tar -xJf /tmp/pharos-0.3.tar.xz -C .
-          rm -rf .pharos-main-import
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "Source already imported."
-            exit 0
-          fi
-          git commit -m "Add Pharos 0.3 identity profiles and reliable indexing"
-          git push origin HEAD:main
+          $exe = "backend/dist/Pharos.exe"
+          if (-not (Test-Path $exe)) { throw "Pharos.exe was not created" }
+          if ((Get-Item $exe).Length -lt 1MB) { throw "Pharos.exe is unexpectedly small" }
+          Get-FileHash $exe -Algorithm SHA256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pharos-Windows-${{ github.sha }}
+          path: backend/dist/Pharos.exe
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Pharos-Windows-${{ github.sha }}
+          path: release
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/Pharos.exe
+          generate_release_notes: true
+          fail_on_unmatched_files: true
