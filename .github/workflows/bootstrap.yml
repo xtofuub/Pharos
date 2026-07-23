@@ -1,0 +1,44 @@
+name: Bootstrap Pharos source
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore source tree
+        shell: bash
+        run: |
+          cat .bootstrap/part* > /tmp/pharos-source.tar.xz
+          tar -xJf /tmp/pharos-source.tar.xz -C .
+          rm -rf .bootstrap
+          rm -f .github/workflows/bootstrap.yml
+
+      - name: Commit source
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Add Pharos source and Windows build workflow"
+          git push origin HEAD:main
+
+      - name: Trigger Windows build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          for attempt in 1 2 3 4 5; do
+            gh workflow run build.yml --ref main && exit 0
+            sleep 3
+          done
+          exit 1
