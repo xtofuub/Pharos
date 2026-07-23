@@ -66,7 +66,7 @@ class AuditConfig(BaseSettings):
 
 class Config(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="BREACHLENS_",
+        env_prefix="BREACHLENS",
         env_nested_delimiter="__",
         env_file=".env",
         env_file_encoding="utf-8",
