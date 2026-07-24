@@ -35,6 +35,22 @@ async def _seed_defaults(state: AppState) -> None:
     populate_service_cache([(r["domain_pattern"], r["service_name"]) for r in rows])
 
 
+async def _recover_interrupted_jobs(db: Database) -> None:
+    """Clear stale 'running' state left by a crash, forced close, or old executable."""
+    interrupted = await db.fetchval("SELECT COUNT(*) FROM index_jobs WHERE status='running'")
+    if interrupted:
+        await db.execute(
+            """
+            UPDATE index_jobs
+            SET status='interrupted', finished_at=datetime('now'),
+                error_message=COALESCE(NULLIF(error_message, ''), 'Pharos stopped before this job completed')
+            WHERE status='running'
+            """
+        )
+        await db.execute("UPDATE sources SET status='pending' WHERE status='indexing'")
+        log.warning("marked %d abandoned indexing job(s) as interrupted", interrupted)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config = load_config()
@@ -45,6 +61,7 @@ async def lifespan(app: FastAPI):
     db = Database(config.storage.db_path)
     await db.connect()
     await db.run_migrations()
+    await _recover_interrupted_jobs(db)
     state = AppState(config=config, db=db)
     app.state.app_state = state
     await _seed_defaults(state)
@@ -57,7 +74,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Pharos",
         description="Local-first breach intelligence search and identity extraction engine",
-        version="0.3.1",
+        version="0.3.2",
         lifespan=lifespan,
     )
     app.add_middleware(
