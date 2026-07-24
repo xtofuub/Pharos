@@ -1,6 +1,6 @@
 [project]
 name = "pharos-local"
-version = "0.3.1"
+version = "0.3.2"
 description = "Local-first breach intelligence, identity clustering, and search engine"
 requires-python = ">=3.11"
 license = { text = "MIT" }
