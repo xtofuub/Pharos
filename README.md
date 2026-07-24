@@ -4,19 +4,19 @@
 
 Pharos indexes authorized local datasets without uploading them anywhere. It can search emails, usernames, URLs, domains, IPs, hashes, phones, and other structured indicators, then bundle repeated email observations into a single identity profile.
 
-## Pharos 0.3
+## Pharos 0.3.1
 
+- No login page, password, account, token, or session flow
 - Native Windows folder picker and scan preview
 - Streaming indexing for large files
 - Clean re-indexing without duplicate rows
 - Automatic removal of stale results for deleted or moved files
 - Permission and file-level error reporting
-- Exact, contains, FTS5-ranked, and real timeout-protected regex search
-- Multi-entity indexing: every email, username, URL, phone, IP, hash, service, and domain on a line is stored
+- Exact, contains, FTS5-ranked, and timeout-protected regex search
+- Multi-entity indexing for every email, username, URL, phone, IP, hash, service, and domain on a line
 - Identity profiles grouped by normalized email
 - Gmail alias correlation (`john.smith+tag@gmail.com` → `johnsmith@gmail.com`)
-- Secure reveal: the browser sends only a record ID; trusted file offsets stay server-side
-- Mandatory password change after the first login
+- Secure reveal using trusted server-side file offsets
 - Local database backup, reset-index, and open-data-folder controls
 - Windows executable builds through GitHub Actions
 
@@ -27,8 +27,8 @@ Open **Actions → Build Windows EXE**, choose the latest successful run, and do
 Tagged builds are attached to GitHub Releases:
 
 ```bash
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.3.1
+git push origin v0.3.1
 ```
 
 ## Run from source
@@ -38,16 +38,7 @@ cd backend
 python run.py
 ```
 
-Then open `http://127.0.0.1:8443`.
-
-First login:
-
-```text
-username: admin
-password: breachelens
-```
-
-Pharos requires a new password before the dashboard can be used.
+Then open `http://127.0.0.1:8443`. The dashboard opens immediately—there is no login screen.
 
 ## Supported files
 
@@ -55,16 +46,7 @@ Pharos requires a new password before the dashboard can be used.
 
 ## Identity profiles
 
-An identity begins with a canonical email address. Every record containing that email is linked to the profile, along with associated:
-
-- email aliases
-- usernames
-- services and domains
-- URLs and hosts
-- phone numbers
-- IP addresses
-- hashes and detected secret types
-- source records and files
+An identity begins with a canonical email address. Every record containing that email is linked to the profile, along with associated email aliases, usernames, services, domains, URLs, hosts, phone numbers, IP addresses, hashes, secret types, source records, and files.
 
 Pharos does not automatically merge unrelated non-email identifiers. That avoids aggressive false-positive identity matches.
 
@@ -78,17 +60,18 @@ Windows and other platforms currently store local application data under:
 
 The directory name remains `breachelens` for compatibility with earlier builds.
 
-## Security model
+## Local security model
 
-- Binds to loopback only by default
+- Binds to `127.0.0.1` only by default
+- No login or password because the application is local-only
 - No telemetry or cloud upload
-- Argon2 password hashing
-- Mandatory first-login password change
-- Sensitive values masked by default
-- Reveal events are audit logged
+- Sensitive values are masked by default
+- Reveal events are audit logged as the local operator
 - Reveal paths and offsets are loaded from SQLite, not trusted from the browser
 - Changed source files must be re-indexed before reveal
 - Regex matching has per-row execution timeouts and result caps
+
+Do not change the server bind address to a public or LAN interface unless you add your own access control in front of Pharos.
 
 ## Development
 
