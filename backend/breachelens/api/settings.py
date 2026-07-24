@@ -1,13 +1,11 @@
 """Settings endpoints."""
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from breachelens.state import AppState
-from .auth import get_state, require_session, SessionInfo
+from .auth import SessionInfo, get_state, require_session
 
 router = APIRouter(tags=["settings"], dependencies=[Depends(require_session)])
 
@@ -26,7 +24,6 @@ async def get_settings(state: AppState = Depends(get_state)) -> dict:
         "indexing": cfg.indexing.model_dump(),
         "search": cfg.search.model_dump(),
         "regex_safety": cfg.regex_safety.model_dump(),
-        "auth": cfg.auth.model_dump(),
         "audit": cfg.audit.model_dump(),
     }
 
