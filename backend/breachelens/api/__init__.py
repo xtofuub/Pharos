@@ -1,5 +1,4 @@
-"""BreachLens API routers."""
-from .auth import router as auth_router
+"""Pharos API routers."""
 from .health import router as health_router
 from .sources import router as sources_router
 from .indexing import router as indexing_router
@@ -13,7 +12,7 @@ from .profiles import router as profiles_router
 from .maintenance import router as maintenance_router
 
 __all__ = [
-    "auth_router", "health_router", "sources_router", "indexing_router",
-    "search_router", "results_router", "aggregations_router", "audit_router",
-    "settings_router", "stats_router", "profiles_router", "maintenance_router",
+    "health_router", "sources_router", "indexing_router", "search_router",
+    "results_router", "aggregations_router", "audit_router", "settings_router",
+    "stats_router", "profiles_router", "maintenance_router",
 ]
