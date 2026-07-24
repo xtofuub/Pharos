@@ -1,4 +1,4 @@
-"""BreachLens configuration loaded from environment + defaults."""
+"""Pharos configuration loaded from environment and defaults."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -21,7 +21,7 @@ class StorageConfig(BaseSettings):
     data_dir: Path = Path.home() / ".local" / "share" / "breachelens"
     index_dir: Path = Path.home() / ".local" / "share" / "breachelens" / "index"
     db_path: Path = Path.home() / ".local" / "share" / "breachelens" / "breachelens.db"
-    default_mode: str = "offset"  # offset | full
+    default_mode: str = "offset"
 
 
 class IndexingConfig(BaseSettings):
@@ -50,14 +50,6 @@ class RegexSafetyConfig(BaseSettings):
     anchor_by_default: bool = True
 
 
-class AuthConfig(BaseSettings):
-    session_lifetime_secs: int = 8 * 3600
-    auto_lock_idle_secs: int = 15 * 60
-    reauth_on_reveal: bool = True
-    reauth_on_export: bool = True
-    allow_reveal: bool = True
-
-
 class AuditConfig(BaseSettings):
     hash_algorithm: str = "sha256"
     sign_with_operator_key: bool = True
@@ -78,7 +70,6 @@ class Config(BaseSettings):
     indexing: IndexingConfig = Field(default_factory=IndexingConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     regex_safety: RegexSafetyConfig = Field(default_factory=RegexSafetyConfig)
-    auth: AuthConfig = Field(default_factory=AuthConfig)
     audit: AuditConfig = Field(default_factory=AuditConfig)
 
     @classmethod
